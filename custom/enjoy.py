@@ -14,11 +14,6 @@ from baselines.common.misc_util import (
 )
 from baselines.common.atari_wrappers_deprecated import wrap_dqn
 
-import matplotlib as mpl
-
-mpl.use('Qt4Agg')
-import matplotlib.pyplot as plt
-
 from custom.model import model, dueling_model
 from custom.build_graph import build_act
 
@@ -46,27 +41,27 @@ def make_env(game_name):
     return env
 
 
-def plot_final_conv_act(f_bf, a_bf):
-    fig = plt.figure()
-    for i in range(0, int(f_bf.shape[0] * 2), 2):
-        fig.add_subplot(int(f_bf.shape[0]), 2, np.floor(i / 2) * 2 + 1)
-        plt.imshow(f_bf[int(i / 2)])
-        fig.add_subplot(int(f_bf.shape[0]), 2, np.floor(i / 2) * 2 + 2)
-        act_size = a_bf[int(i / 2)].shape[0]
-        act = np.reshape(a_bf[int(i / 2)], (int(np.sqrt(act_size)), int(np.sqrt(act_size))))
-        plt.imshow(act)
-    plt.show()
+def int_buffers():
+    return {'frames': [],
+           'finConvAct': [],
+           'fstFullAct': [],
+           'action': [],
+           'reward': []}
 
-def save_step(frame_buffer, finConvAct_buffer, fstFullAct_buffer, action_buffer, reward_buffer,
-              env, finConvAct, fstFullAct, action, rew):
-    frame_buffer.append(env.render('rgb_array'))
-    finConvAct_buffer.append(finConvAct)
-    fstFullAct_buffer.append(fstFullAct)
-    action_buffer.append(action)
-    reward_buffer.append(rew)
 
-def save_buffers_to_file(frame_buffer, finConvAct_buffer, fstFullAct_buffer, action_buffer, reward_buffer,
-                         ssdir, num_episode):
+def save_step(buffers, inp):
+    """
+    Saves states and activities after each frame
+    """
+    for key, value in buffers.items():
+        value.append(inp[key])
+
+
+def save_buffers_to_file(buffers, ssdir, num_episode):
+    """
+    Saves the buffers to corresponding files after an episodes ends
+    """
+
     out_dir = os.path.join(ssdir, 'episode_%03i' % num_episode)
 
     try:
@@ -75,29 +70,12 @@ def save_buffers_to_file(frame_buffer, finConvAct_buffer, fstFullAct_buffer, act
         if not os.path.exists(ssdir):
             sys.exit("Error could't make output dir")
 
-    np.save(os.path.join(out_dir, "frames.npy"), np.array(frame_buffer))
-    frame_buffer = []
+    for key, value in buffers.items():
+        np.save(os.path.join(out_dir, "%s.npy" % key), np.array(value))
 
-    np.save(os.path.join(out_dir, "finConvAct.npy"), np.array(finConvAct_buffer))
-    finConvAct_buffer = []
-
-    np.save(os.path.join(out_dir, "fstFullAct.npy"), np.array(fstFullAct_buffer))
-    fstFullAct_buffer = []
-
-    np.save(os.path.join(out_dir, "actions.npy"), np.array(action_buffer))
-    action_buffer = []
-
-    np.save(os.path.join(out_dir, "rewards.npy"), np.array(reward_buffer))
-    reward_buffer = []
-
-    return frame_buffer, finConvAct_buffer, fstFullAct_buffer, action_buffer, reward_buffer
 
 def play(env, act, stochastic, video_path, ssdir, maxNumEpisodes):
-    frame_buffer = []
-    finConvAct_buffer = []
-    fstFullAct_buffer = []
-    action_buffer = []
-    reward_buffer = []
+    buffers = int_buffers()
 
     num_episodes = 0
     video_recorder = None
@@ -109,13 +87,19 @@ def play(env, act, stochastic, video_path, ssdir, maxNumEpisodes):
         video_recorder.capture_frame()
         action, finConvAct, fstFullAct = act(np.array(obs)[None], stochastic=stochastic)
         obs, rew, done, info = env.step(action)
-        save_step(frame_buffer, finConvAct_buffer, fstFullAct_buffer, action_buffer, reward_buffer,
-                  env, finConvAct, fstFullAct, action, rew)
+        # Save states and activities in buffers for current episode
+        save_step(buffers,
+                  {'frames': env.render('rgb_array'),
+                   'finConvAct': np.array(finConvAct),
+                   'fstFullAct': np.array(fstFullAct),
+                   'action': action,
+                   'reward': rew})
         if done:
             obs = env.reset()
-            frame_buffer, finConvAct_buffer, fstFullAct_buffer, action_buffer, reward_buffer = \
-                save_buffers_to_file(frame_buffer, finConvAct_buffer, fstFullAct_buffer, action_buffer, reward_buffer,
-                                 ssdir, num_episodes)
+            # Save buffered states and activities to file afer episode ends
+            save_buffers_to_file(buffers, ssdir, num_episodes)
+            # Reset buffer
+            buffers = int_buffers()
         if len(info["rewards"]) > num_episodes:
             if len(info["rewards"]) == 1 and video_recorder.enabled:
                 # save video of first episode
@@ -127,9 +111,14 @@ def play(env, act, stochastic, video_path, ssdir, maxNumEpisodes):
             if num_episodes >= int(maxNumEpisodes):
                 return
 
+
 if __name__ == '__main__':
     with U.make_session(4) as sess:
         args = parse_args()
+
+        maxNumEpisodes = args.maxNumEpisodes
+        if not maxNumEpisodes:
+            maxNumEpisodes = 0
 
         model_name = os.path.splitext(os.path.basename(args.model_dir))[0]
         ssdir = args.saveStateDir
@@ -148,4 +137,4 @@ if __name__ == '__main__':
             q_func=dueling_model if args.dueling else model,
             num_actions=env.action_space.n)
         U.load_state(os.path.join(args.model_dir, "saved"))
-        play(env, act, args.stochastic, args.video, ssdir, args.maxNumEpisodes)
+        play(env, act, args.stochastic, args.video, ssdir, maxNumEpisodes)
