@@ -3,6 +3,7 @@ import gym
 import os
 import numpy as np
 import sys
+# directory: ~/repo1/atari-state-representation-learning/custom
 
 from gym.monitoring import VideoRecorder
 

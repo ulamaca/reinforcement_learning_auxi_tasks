@@ -6,6 +6,8 @@ import tensorflow as tf
 import tempfile
 import time
 import pickle
+import math
+import sys
 
 import baselines.common.tf_util as U
 
@@ -26,7 +28,7 @@ from baselines.common.schedules import LinearSchedule, PiecewiseSchedule
 # copy over LazyFrames
 from baselines.common.atari_wrappers_deprecated import wrap_dqn
 from baselines.common.azure_utils import Container
-from custom.model_aux import model, dueling_model, auxiliary_model
+from custom.model_aux import model, dueling_model, auxiliary_model, model_cnn, model_q_postcnn, model_aux_postcnn
 
 def parse_args():
     parser = argparse.ArgumentParser("DQN experiments for Atari games")
@@ -122,9 +124,15 @@ if __name__ == '__main__':
     if args.seed > 0:
         set_global_seeds(args.seed)
         env.unwrapped.seed(args.seed)
+    # Initialization for saving-related variables
     errors_summary = []
-    var_error_summary = []
-    rewards_100pi_mean = []
+    error_summary_temp = []
+    std_error_summary = []
+    num_iters_summary = []
+    rewards_100pi_summary = []
+    rewards_100pi_summary_temp = []
+    N_temp_saving = 5 * 1000000 # should be a multiple of "arg.target-update-freq"
+
     with U.make_session(4) as sess:
         # Create training graph and replay buffer
         act, s_extract, train, update_target, debug = deepq.build_train_q_aux(
@@ -155,12 +163,18 @@ if __name__ == '__main__':
             grad_norm_clipping=10,
             dueling=args.dueling
         )
+
+        # ** Graph construction debugging ** (TODO) to remove once corrected
+        #for i in tf.trainable_variables():
+        #    print(i.name)
+        # sys.exit()
         # Building tensorboard for debugging
-        if not os.path.exists('tb_test'):
-            os.makedirs('tb_test')
-        logs_path = os.path.join(os.getcwd(), 'tb_test' )
-        merged = tf.summary.merge_all()
+#        logs_path = os.path.join(savedir, 'tb_test' )
+        logs_path = "~/repo1/atari-state-representation-learning/tb_test"
+#        if not os.path.exists(logs_path):
+#            os.makedirs('tb_test')
         file_writer = tf.summary.FileWriter(logs_path, sess.graph)
+        merged = tf.summary.merge_all() # (TODO) for tensorflow histogram, to summarize the learning procedure
 
         approximate_num_iters = args.num_steps / 4
         exploration = PiecewiseSchedule([
@@ -189,7 +203,6 @@ if __name__ == '__main__':
         steps_per_iter = RunningAvg(0.999)
         iteration_time_est = RunningAvg(0.999)
         obs = env.reset()
-        # args.replay_buffer_size=2000 # for debugging (TODO) delete this line when finishing the code
 
         # Main training loop
         while True:
@@ -212,17 +225,13 @@ if __name__ == '__main__':
                 else:
                     obses_t, actions, rewards, obses_tp1, dones = replay_buffer.sample(args.batch_size)
                     weights = np.ones_like(rewards)
-                # Minimize the error in Bellman's equation and compute TD-error
-
+                # Minimize the error in Bellman's equation and compute TD-error with auxiliary tasks errors
                 td_errors = train(obses_t, actions, rewards, obses_tp1, dones, weights)
                 states_tp1 = s_extract(obses_tp1)
                 rpred_errors = train_rpred(obses_t, actions, rewards, weights)
                 spred_errors = train_spred(obses_t, actions, states_tp1, weights)
-                error_tuple = (((np.mean(td_errors * weights)), np.mean(rpred_errors * weights), np.mean(spred_errors * weights)), num_iters)
-                var_error_tuple = (((np.var(td_errors * weights)), np.var(rpred_errors * weights), np.var(spred_errors * weights)), num_iters)
-                # print('((td, rpe, spe), num_iter )=' + str(error_tuple))
-                errors_summary.append(error_tuple)
-                var_error_summary.append(var_error_tuple)
+                error_tuple = ((np.mean(td_errors * weights)), np.mean(rpred_errors * weights), np.mean(spred_errors * weights))
+                error_summary_temp.append(error_tuple)
 
                 # Update the priorities in the replay buffer
                 if args.prioritized:
@@ -231,6 +240,19 @@ if __name__ == '__main__':
             # Update target network.
             if num_iters % args.target_update_freq == 0:
                 update_target()
+                if num_iters > max(5 * args.batch_size, args.replay_buffer_size // 20):
+                    rewards_100pi_summary.append((np.mean(rewards_100pi_summary_temp), np.std(rewards_100pi_summary_temp)))
+                    errors_summary.append(np.mean(error_summary_temp, axis=0))
+                    std_error_summary.append(np.std(error_summary_temp, axis=0))
+                    num_iters_summary.append(num_iters)
+                    errors_summary_temp = []
+                    rewards_100pi_summary_temp = []
+                    with open(os.path.join(savedir, 'error_summary_real.pickle'), 'wb') as f:
+                        pickle.dump([errors_summary, std_error_summary, rewards_100pi_summary, num_iters_summary], f)
+                    if num_iters > N_temp_saving and num_iters // N_temp_saving:
+                        with open(os.path.join(savedir, 'error_summary_temp' + str(num_iters) + '.pickle'), 'wb') as f:
+                            pickle.dump([errors_summary, std_error_summary, rewards_100pi_summary, num_iters_summary], f)
+
 
             if start_time is not None:
                 steps_per_iter.update(info['steps'] - start_steps)
@@ -250,16 +272,14 @@ if __name__ == '__main__':
 
             # Reporting the training status, (optional) adding the errors for all other auxiliary tasks
             if done:
+                rewards_100pi_summary_temp.append(np.mean(info["rewards"][-100:]))
                 steps_left = args.num_steps - info["steps"]
                 completion = np.round(info["steps"] / args.num_steps, 1)
-
                 logger.record_tabular("% completion", completion)
                 logger.record_tabular("steps", info["steps"])
                 logger.record_tabular("iters", num_iters)
                 logger.record_tabular("episodes", len(info["rewards"]))
                 logger.record_tabular("reward (100 epi mean)", np.mean(info["rewards"][-100:]))
-                reward_100pi_tuple = ((np.mean(info["rewards"][-100:]), np.var(info["rewards"][-100:])), num_iters) #saving performance information
-                rewards_100pi_mean.append(reward_100pi_tuple)
                 logger.record_tabular("exploration", exploration.value(num_iters))
                 if args.prioritized:
                     logger.record_tabular("max priority", replay_buffer._max_priority)
@@ -269,6 +289,4 @@ if __name__ == '__main__':
                 logger.log()
                 logger.log("ETA: " + pretty_eta(int(steps_left / fps_estimate)))
                 logger.log()
-        with open('error_summary_' + str(num_iters) + '.pickle', 'wb') as f:
-            pickle.dump([errors_summary, var_error_summary, rewards_100pi_mean], f)
 

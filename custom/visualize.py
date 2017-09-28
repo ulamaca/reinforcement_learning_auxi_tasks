@@ -5,7 +5,7 @@ import sys
 import numpy as np
 
 import matplotlib as mpl
-mpl.use('Qt4Agg')
+#mpl.use('Qt4Agg')
 import matplotlib.pyplot as plt
 
 from custom.utils import parse_range_list

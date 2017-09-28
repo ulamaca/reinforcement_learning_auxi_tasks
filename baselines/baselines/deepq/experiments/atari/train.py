@@ -25,7 +25,7 @@ from baselines.common.schedules import LinearSchedule, PiecewiseSchedule
 # copy over LazyFrames
 from baselines.common.atari_wrappers_deprecated import wrap_dqn
 from baselines.common.azure_utils import Container
-from .model import model, dueling_model
+from baselines.deepq.experiments.atari.model import model, dueling_model
 
 
 def parse_args():
@@ -134,6 +134,8 @@ if __name__ == '__main__':
             grad_norm_clipping=10,
             double_q=args.double_q
         )
+
+
 
         approximate_num_iters = args.num_steps / 4
         exploration = PiecewiseSchedule([

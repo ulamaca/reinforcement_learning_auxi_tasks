@@ -1,11 +1,13 @@
 import os
 import tempfile
 import zipfile
-
+# (TODO) when using CONTAINER, reactivating this functions; temporary comment out to avoid confusion''
 from azure.common import AzureMissingResourceHttpError
-from azure.storage.blob import BlobService
+from azure.storage.blob import BlockBlobService # when running on cluster, we need to use this import
+# from azure.storage.blob import BlobService
 from shutil import unpack_archive
 from threading import Event
+
 
 """TODOS:
    - use Azure snapshots instead of hacky backups
