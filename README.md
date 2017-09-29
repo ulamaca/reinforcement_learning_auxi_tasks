@@ -11,7 +11,8 @@
     - b) Planning with the two models
     - c) Successor representation using Monte Carlo estimate from the state-prediction model
 - The final report of the project will be uploaded soon.
-
+# Usage
+- please go to ./custom for details
 # Reference:
 
 [1] OpenAI Baselines: https://github.com/openai/baselines
