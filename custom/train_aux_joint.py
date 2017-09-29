@@ -8,6 +8,8 @@ import time
 import pickle
 import math
 import sys
+sys.path.append(os.getcwd())
+sys.path.append("..")
 
 import baselines.common.tf_util as U
 
